@@ -1,37 +1,21 @@
 name: Build OpenWrt for Xiaomi AX3600
 
 on:
-  repository_dispatch:
-  inputs:
-    ssh_actions:
-      description: 'SSH connection to Actions'
-      required: false
-      default: 'false'
   workflow_dispatch:
     inputs:
       ssh:
         description: 'SSH connection to Actions'
         required: false
         default: 'false'
-  schedule:
-    - cron: '0 16 * * *' # 每天北京时间 0 点自动编译（按需修改或注释）
 
 env:
   REPO_URL: "https://github.com/xinpenghan/immortalwrt"
   REPO_BRANCH: "master"
-  FEEDS_CONF: "feeds.conf.default"
-  CONFIG_FILE: "configs/ax3600.config"
-  DIY_P1_SH: "diy/part1.sh"
-  DIY_P2_SH: "diy/part2.sh"
-  UPLOAD_FIRMWARE: true
-  UPLOAD_COWTRANSFER: false
-  UPLOAD_WETRANSFER: false
   TZ: "Asia/Shanghai"
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
       - name: Checkout
@@ -53,7 +37,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo -E apt-get update
-          # 【修复】针对 Ubuntu 24.04 替换已废弃和找不到的包
+          # 【修复】针对 Ubuntu 24.04 替换已废弃和找不到的包，去掉无用包避免依赖冲突
           sudo -E apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch python3 python3-setuptools unzip zlib1g-dev lib32gcc-s1 libc6-dev-i386 subversion flex gcc-multilib g++-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler g++-12 gperf wget curl rsync swig libncurses-dev
           sudo -E apt-get -y autoremove --purge
           sudo timedatectl set-timezone "$TZ"
@@ -61,10 +45,8 @@ jobs:
           sudo chown $USER:$GROUP /workdir
 
       - name: Clone Source Code
-        id: clone
         run: |
           git clone -b $REPO_BRANCH $REPO_URL /workdir/openwrt
-          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
           cd /workdir/openwrt
           echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           echo "COMMIT_DATE=$(git log -1 --format=%cd --date=short)" >> $GITHUB_ENV
@@ -75,38 +57,21 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Load Custom Configuration (AX3600)
+      - name: Load Custom Configuration (Xiaomi AX3600)
         run: |
           cd /workdir/openwrt
-          # 如果你有自定义 config 文件，取消下面的注释并确保文件存在
-          # [ -f $CONFIG_FILE ] && mv $CONFIG_FILE .config
-          
-          # 如果没有预设 config，则通过脚本直接生成 AX3600 的标准配置
-          if [ ! -f .config ]; then
-            echo ">>> 未检测到自定义 .config，正在自动生成 AX3600 标准配置..."
-            # 针对小米 AX3600 设置目标平台及基础组件
-            sed -i 's/^TARGET_.*/# TARGET_*/g' .config 2>/dev/null || true
-            cat >> .config <<EOF
-            CONFIG_TARGET_qualcommax=y
-            CONFIG_TARGET_qualcommax_ipq807x=y
-            CONFIG_TARGET_qualcommax_ipq807x_DEVICE_xiaomi_ax3600=y
-            CONFIG_PACKAGE_luci=y
-            CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
-            CONFIG_PACKAGE_kmod-ath11k-firmware-qca6390=y
-            EOF
-          fi
-          
-          make defconfig
-          # 基础定制：开启必要内核模块
-          cat >> .config <<EOF
-          CONFIG_KERNEL_BUILD_DOMAIN="ImmortalWrt"
-          CONFIG_KERNEL_BUILD_USER="Builder"
-          CONFIG_KERNEL_OVERLAY_FS=y
+          # 直接硬写生成 AX3600 的配置，避免因为缺少 config 文件导致报错
+          cat > .config <<EOF
+          CONFIG_TARGET_qualcommax=y
+          CONFIG_TARGET_qualcommax_ipq807x=y
+          CONFIG_TARGET_qualcommax_ipq807x_DEVICE_xiaomi_ax3600=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+          CONFIG_PACKAGE_kmod-ath11k-firmware-qca6390=y
           EOF
           make defconfig
 
       - name: Download Packages
-        id: download
         run: |
           cd /workdir/openwrt
           make download -j$(nproc)
@@ -119,46 +84,13 @@ jobs:
           cd /workdir/openwrt
           echo -e "$(nproc) thread compile"
           make -j$(nproc) || make -j1 V=s
-          echo "::set-output name=status::$?"
           echo "COMPILE_STATUS=$?" >> $GITHUB_ENV
-
-      - name: Check Space & Upload Artifact
-        if: env.COMPILE_STATUS == '0' && env.UPLOAD_FIRMWARE == 'true'
-        run: |
-          cd /workdir/openwrt
-          echo ">>> 磁盘使用情况:"
-          df -h
-          echo ">>> 固件文件列表:"
-          find bin/targets/ -type f -name "*.bin" -o -name "*.sysupgrade" -o -name "*.tar" | head -20
-          
-          # 打包所有固件
-          tar -zcf /workdir/firmware-${{ env.COMMIT_DATE }}-${{ env.COMMIT_HASH }}.tar.gz bin/targets/
-          
-          # 上传到 GitHub Artifacts (保留30天)
-          echo ">>> 固件上传成功，可在 Actions Artifacts 中下载"
 
       - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
-        if: env.COMPILE_STATUS == '0' && env.UPLOAD_FIRMWARE == 'true'
+        if: env.COMPILE_STATUS == '0'
         with:
           name: Xiaomi_AX3600_Firmware_${{ env.COMMIT_DATE }}
-          path: /workdir/firmware-*.tar.gz
+          path: /workdir/openwrt/bin/targets/
           retention-days: 30
           if-no-files-found: ignore
-
-      - name: SSH Connection to Actions
-        uses: P3TERX/ssh2actions@v1.0.0
-        if: (github.event.inputs.ssh == 'true' || github.event.inputs.ssh_actions == 'true') && always()
-        with:
-          mode: tea-link
-          connectTimeout: 3m
-          idleTimeout: 0
-
-      - name: Delete Workflow Runs
-        uses: Mattraks/delete-workflow-runs@v2
-        if: always()
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 1
-          keep_minimum_runs: 3
