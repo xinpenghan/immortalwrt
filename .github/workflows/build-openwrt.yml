@@ -54,7 +54,6 @@ jobs:
           
           if [ -z "$DEVICE_NAME" ]; then
             echo "❌ 错误：在 ath79/generic (NOR) 平台下没有找到 DW33D 的设备支持！"
-            echo "该设备可能只有 NAND 版本，或者源码暂未支持其 NOR 变体。"
             exit 1
           fi
           
@@ -68,13 +67,8 @@ jobs:
           
           echo "CONFIG_TARGET_ath79_generic_DEVICE_$DEVICE=y" >> .config
           echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
-          
-          # 开启 LuCI 网页界面及中文包
           echo "CONFIG_PACKAGE_luci=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-          
-          # (可选) 在这里继续添加你需要的插件，例如：
-          # echo "CONFIG_PACKAGE_luci-app-ssr-plus=y" >> .config
           
           make defconfig
 
