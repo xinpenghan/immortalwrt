@@ -1,4 +1,4 @@
-name: Build OpenWrt for Xiaomi AX3600
+name: Build OpenWrt for Xiaomi Mi Router 3G
 
 on:
   workflow_dispatch:
@@ -57,17 +57,16 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Load Custom Configuration (Xiaomi AX3600)
+      - name: Load Custom Configuration (Xiaomi Mi Router 3G)
         run: |
           cd /workdir/openwrt
-          # 直接硬写生成 AX3600 的配置，避免因为缺少 config 文件导致报错
+          # 直接硬写生成小米 3G (MT7621) 的配置，避免因为缺少 config 文件导致报错
           cat > .config <<EOF
-          CONFIG_TARGET_qualcommax=y
-          CONFIG_TARGET_qualcommax_ipq807x=y
-          CONFIG_TARGET_qualcommax_ipq807x_DEVICE_xiaomi_ax3600=y
+          CONFIG_TARGET_ramips=y
+          CONFIG_TARGET_ramips_mt7621=y
+          CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mi-router-3g=y
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
-          CONFIG_PACKAGE_kmod-ath11k-firmware-qca6390=y
           EOF
           make defconfig
 
@@ -90,7 +89,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: env.COMPILE_STATUS == '0'
         with:
-          name: Xiaomi_AX3600_Firmware_${{ env.COMMIT_DATE }}
+          name: Xiaomi_Mi_Router_3G_Firmware_${{ env.COMMIT_DATE }}
           path: /workdir/openwrt/bin/targets/
           retention-days: 30
           if-no-files-found: ignore
