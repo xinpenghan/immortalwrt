@@ -3,17 +3,10 @@ name: Build ImmortalWrt for DW33D (NOR)
 on:
   repository_dispatch:
   workflow_dispatch:
-    inputs:
-      ssh:
-        description: 'SSH connection to Actions'
-        required: false
-        default: 'false'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # 防止多个编译同时运行，浪费额度
-    if: github.event.repository.owner.id == github.actor.id 
 
     steps:
       - name: Checkout source code
@@ -45,26 +38,18 @@ jobs:
         run: |
           git clone https://github.com/immortalwrt/immortalwrt.git
           cd immortalwrt
-          # 切换到最新稳定版分支（推荐，比master稳定很多）
           git checkout openwrt-23.05
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # ==========================================
-      # 【核心步骤】：自动寻找 DW33D 对应的 NOR 真实名字
-      # ==========================================
       - name: Detect correct NOR device name
         id: detect_device
         run: |
           cd immortalwrt
-          # 强制将目标切换为 ath79/generic (NOR)
           echo "CONFIG_TARGET_ath79=y" > .config
           echo "CONFIG_TARGET_ath79_generic=y" >> .config
-          
-          # 让系统解析依赖
           make defconfig > /dev/null 2>&1
           
-          # 在配置文件中搜索 DW33D 相关的选项
           DEVICE_NAME=$(grep -o 'CONFIG_TARGET_ath79_generic_DEVICE_[a-zA-Z0-9_-]*' .config | grep -i 'dw33d' | head -n 1 | sed 's/CONFIG_TARGET_ath79_generic_DEVICE_//')
           
           if [ -z "$DEVICE_NAME" ]; then
@@ -76,29 +61,21 @@ jobs:
           echo "✅ 找到设备真实名称: $DEVICE_NAME"
           echo "DEVICE=$DEVICE_NAME" >> $GITHUB_OUTPUT
 
-      # ==========================================
-      # 【自定义配置】：在这里注入你需要的插件
-      # ==========================================
       - name: Apply custom config
         run: |
           cd immortalwrt
           DEVICE="${{ steps.detect_device.outputs.DEVICE }}"
           
-          # 1. 启用目标设备
           echo "CONFIG_TARGET_ath79_generic_DEVICE_$DEVICE=y" >> .config
-          
-          # 2. 强制开启 SquashFS 文件系统 (NOR 必备)
           echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
           
-          # 3. 启用 LuCI 网页界面 (默认配置是不带的，必须开启)
+          # 开启 LuCI 网页界面及中文包
           echo "CONFIG_PACKAGE_luci=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
           
-          # 4. (可选) 在这里添加你想要的其他插件，例如：
+          # (可选) 在这里继续添加你需要的插件，例如：
           # echo "CONFIG_PACKAGE_luci-app-ssr-plus=y" >> .config
-          # echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
           
-          # 解析依赖关系（这步会自动把需要的底层依赖补全，并去掉不兼容的选项）
           make defconfig
 
       - name: Download packages
@@ -110,17 +87,13 @@ jobs:
       - name: Compile firmware
         run: |
           cd immortalwrt
-          # -j$(nproc) 充分利用 CPU 多线程编译
-          # 如果失败，会自动降级为单线程 (V=s) 打印详细报错日志
           make -j$(nproc) || make -j1 V=s
 
       - name: Prepare artifacts
-        if: env.EXIT_CODE == '0'
         run: |
           cd immortalwrt
           mkdir -p upload
           find bin/targets/ -type f -name "*.bin" -o -name "*.tar.gz" | xargs -I {} cp {} upload/
-          # 顺便把编译好的 config 备份出来，方便以后排查
           cp .config upload/config.backup
 
       - name: Upload artifacts
