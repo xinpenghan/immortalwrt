@@ -1,11 +1,11 @@
 name: Build OpenWrt for Xiaomi Mi Router 3G (Fixed & Optimized)
 
-on: workflow_dispatch:
+于: workflow_dispatch:
   inputs:
     ssh:
       description: 'SSH connection to Actions'
       required: false
-      default: 'false'
+      默认: 'false'
 
 env:
   REPO_URL: "https://github.com/xinpenghan/immortalwrt"
