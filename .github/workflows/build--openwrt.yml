@@ -1,12 +1,12 @@
 name: Build OpenWrt for Xiaomi Mi Router 3G
 
-于:
+on:
   workflow_dispatch:
     inputs:
       ssh:
         description: 'SSH connection to Actions'
         required: false
-        默认: 'false'
+        default: 'false'
 
 env:
   REPO_URL: "https://github.com/xinpenghan/immortalwrt"
@@ -37,7 +37,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo -E apt-get update
-          # 【修复】针对 Ubuntu 24.04 替换已废弃和找不到的包，去掉无用包避免依赖冲突
+          # 安装编译依赖
           sudo -E apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch python3 python3-setuptools unzip zlib1g-dev lib32gcc-s1 libc6-dev-i386 subversion flex gcc-multilib g++-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler g++-12 gperf wget curl rsync swig libncurses-dev
           sudo -E apt-get -y autoremove --purge
           sudo timedatectl set-timezone "$TZ"
@@ -54,47 +54,75 @@ jobs:
       - name: Update Feeds
         run: |
           cd /workdir/openwrt
+          
+          # 【重要】添加第三方插件源 (kenzok8)，包含 passwall, turboacc, ddns-go 等
+          echo "src-git kenzo https://github.com/kenzok8/openwrt-packages.git" >> feeds.conf.default
+          echo "src-git small https://github.com/kenzok8/small.git" >> feeds.conf.default
+          
+          # 更新并安装所有 feeds
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Load Custom Configuration (Xiaomi Mi Router 3G)
         run: |
           cd /workdir/openwrt
-          # 直接硬写生成小米 3G (MT7621) 的配置，避免因为缺少 config 文件导致报错
+          # 生成配置文件
           cat > .config <<EOF
           CONFIG_TARGET_ramips=y
           CONFIG_TARGET_ramips_mt7621=y
           CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mi-router-3g=y
+          
+          # LuCI 基础
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
           
-          # 4 PassWall (科学上网)
+          # --- 科学上网 (PassWall) ---
           CONFIG_PACKAGE_luci-app-passwall=y
           CONFIG_PACKAGE_passwall=y
-          # PassWall 核心后端
+          # 核心后端 (注意：小米3G空间有限，建议二选一，若空间不足请注释掉其中一个)
           CONFIG_PACKAGE_xray-core=y
           CONFIG_PACKAGE_sing-box=y
+          # PassWall 依赖
           CONFIG_PACKAGE_chinadns-ng=y
           CONFIG_PACKAGE_dns2socks=y
           CONFIG_PACKAGE_dns2tcp=y
-          
-          CONFIG_PACKAGE_luci-app-turboacc=y 
-          CONFIG_PACKAGE_luci-app-watchcat=y 
-          CONFIG_PACKAGE_luci-app-ddns=y 
-          CONFIG_PACKAGE_luci-app-ddns-go=y 
-          CONFIG_PACKAGE_luci-app-netdata=y 
-          CONFIG_PACKAGE_luci-app-vlmcsd=y
-
-          # 常用协议支持 (小米3G 建议精简，只保留最高效的)
           CONFIG_PACKAGE_shadowsocks-rust=y
           CONFIG_PACKAGE_trojan-plus=y
-          # 以下协议若不需要可注释掉以节省空间
-          # CONFIG_PACKAGE_hysteria is not set
-          # CONFIG_PACKAGE_shadowsocksr-libev is not set
-          # CONFIG_PACKAGE_v2ray-plugin is not set
-
+          
+          # --- 用户请求的新增插件 ---
+          
+          # Turbo ACC (网络加速)
+          CONFIG_PACKAGE_luci-app-turboacc=y
+          # 注意：turboacc 通常依赖 shortcut-fe 或 flow-offloading，这里假设默认依赖已处理
+          
+          # Watchcat (看门狗/自动重启)
+          CONFIG_PACKAGE_luci-app-watchcat=y
+          
+          # DDNS (动态域名) - 官方原版
+          CONFIG_PACKAGE_luci-app-ddns=y
+          CONFIG_PACKAGE_ddns-scripts=y
+          
+          # DDNS-GO (更现代的DDNS工具)
+          CONFIG_PACKAGE_luci-app-ddns-go=y
+          
+          # Netdata (系统监控)
+          CONFIG_PACKAGE_luci-app-netdata=y
+          
+          # VLMCSD (KMS激活服务器)
+          CONFIG_PACKAGE_luci-app-vlmcsd=y
+          
           EOF
+          
+          # 应用配置
           make defconfig
+          
+          # 【调试】打印关键配置状态，确认是否被识别
+          echo "=== Check PassWall Config ==="
+          grep PASSWALL .config || echo "PassWall NOT found in config!"
+          echo "=== Check TurboACC Config ==="
+          grep TURBOACC .config || echo "TurboACC NOT found in config!"
+          echo "=== Check DDNS-GO Config ==="
+          grep DDNS_GO .config || echo "DDNS-GO NOT found in config!"
 
       - name: Download Packages
         run: |
@@ -108,6 +136,7 @@ jobs:
         run: |
           cd /workdir/openwrt
           echo -e "$(nproc) thread compile"
+          # 如果并行编译失败，则单线程详细输出以便排查
           make -j$(nproc) || make -j1 V=s
           echo "COMPILE_STATUS=$?" >> $GITHUB_ENV
 
